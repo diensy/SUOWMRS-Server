@@ -1,3 +1,4 @@
+import './config/dns.js';
 import http from 'http';
 import dotenv from 'dotenv';
 import { Server as SocketIOServer } from 'socket.io';
@@ -32,24 +33,31 @@ const io = new SocketIOServer(server, {
 setupSockets(io);
 
 // Connect to Database & Start Server
-connectDB().then(() => {
-  // Initialize services that require DB connection
-  initSimulator(io);
-  initDiagnostics(io);
-  initMunicipalityNodes();
-  startMunicipalitySimulation(io);
-  initHistoricalDataset();
-  initWeatherService();
-  initPredictionAuditDataset();
-}).finally(() => {
-  server.listen(PORT, () => {
-    console.log(`=========================================`);
-    console.log(`🌊 SUOWMRS Server running on port ${PORT}`);
-    console.log(`📡 API Health: http://localhost:${PORT}/api/health`);
-    console.log(`⚡ WebSocket Stream ready`);
-    console.log(`📊 Sensor Simulator: Active (5s interval)`);
-    console.log(`=========================================`);
+connectDB()
+  .then((conn) => {
+    if (conn) {
+      // Initialize services that require DB connection
+      initSimulator(io);
+      initDiagnostics(io);
+      initMunicipalityNodes();
+      startMunicipalitySimulation(io);
+      initHistoricalDataset();
+      initWeatherService();
+      initPredictionAuditDataset();
+    }
+  })
+  .catch((err) => {
+    console.error(`[Server Warning] Database connection failed (${err.message}). Server running in standalone API mode.`);
+  })
+  .finally(() => {
+    server.listen(PORT, () => {
+      console.log(`=========================================`);
+      console.log(`🌊 SUOWMRS Server running on port ${PORT}`);
+      console.log(`📡 API Health: http://localhost:${PORT}/api/health`);
+      console.log(`⚡ WebSocket Stream ready`);
+      console.log(`📊 Sensor Simulator: Active (5s interval)`);
+      console.log(`=========================================`);
+    });
   });
-});
 
 export { io };
