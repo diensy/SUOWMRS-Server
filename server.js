@@ -11,6 +11,7 @@ import { initMunicipalityNodes, startMunicipalitySimulation } from './services/m
 import { initHistoricalDataset } from './services/datasetService.js';
 import { initWeatherService } from './services/weatherService.js';
 import { initPredictionAuditDataset } from './services/predictionEngine.js';
+import { seedInitialComplaints } from './routes/complaints.js';
 
 // Load environment configuration
 dotenv.config();
@@ -44,6 +45,7 @@ connectDB()
       initHistoricalDataset();
       initWeatherService();
       initPredictionAuditDataset();
+      seedInitialComplaints();
     }
   })
   .catch((err) => {

@@ -6,56 +6,59 @@ import { authenticate } from './auth.js';
 const router = express.Router();
 
 // Helper to seed initial complaints if empty
-async function seedInitialComplaints() {
-  const count = await Complaint.countDocuments();
-  if (count === 0) {
-    const demoComplaints = [
-      {
-        complaintId: 'CMP-2026-001',
-        citizenName: 'Aarav Sharma',
-        citizenMobile: '+91 98765 43210',
-        issueType: 'Drainage Blockage',
-        title: 'Severe plastic accumulation at Ward 12 Main Drain',
-        description: 'Main drainage grate is completely blocked with plastic waste and mud after heavy rain.',
-        location: 'Zone 4 - Ward 12 Riverbed Crossing',
-        ward: 'Ward 12',
-        priority: 'High',
-        status: 'Assigned',
-        assignedTechnician: 'Rajesh Kumar (TECH-8842)',
-      },
-      {
-        complaintId: 'CMP-2026-002',
-        citizenName: 'Priya Das',
-        citizenMobile: '+91 98765 11223',
-        issueType: 'Water Overflow',
-        title: 'Water overflowing onto market road',
-        description: 'Underground storage diverter appears slow to open causing water backup on street.',
-        location: 'Market Ridge Culvert',
-        ward: 'Ward 5',
-        priority: 'Urgent',
-        status: 'Submitted',
-        assignedTechnician: 'Unassigned',
-      },
-      {
-        complaintId: 'CMP-2026-003',
-        citizenName: 'Rohan Mohanty',
-        citizenMobile: '+91 98765 99887',
-        issueType: 'Water Leakage',
-        title: 'Minor leakage near solenoid valve junction',
-        description: 'Diverter pipe joint has a steady trickle leak into side gutter.',
-        location: 'East Side Channel',
-        ward: 'Ward 18',
-        priority: 'Medium',
-        status: 'In Progress',
-        assignedTechnician: 'Ramesh Sahoo (TECH-9021)',
-      },
-    ];
-    await Complaint.insertMany(demoComplaints);
-    console.log('✅ Seeded initial demo citizen complaints!');
+export async function seedInitialComplaints() {
+  try {
+    const count = await Complaint.countDocuments();
+    if (count === 0) {
+      const demoComplaints = [
+        {
+          complaintId: 'CMP-2026-001',
+          citizenName: 'Aarav Sharma',
+          citizenMobile: '+91 98765 43210',
+          issueType: 'Drainage Blockage',
+          title: 'Severe plastic accumulation at Ward 12 Main Drain',
+          description: 'Main drainage grate is completely blocked with plastic waste and mud after heavy rain.',
+          location: 'Zone 4 - Ward 12 Riverbed Crossing',
+          ward: 'Ward 12',
+          priority: 'High',
+          status: 'Assigned',
+          assignedTechnician: 'Rajesh Kumar (TECH-8842)',
+        },
+        {
+          complaintId: 'CMP-2026-002',
+          citizenName: 'Priya Das',
+          citizenMobile: '+91 98765 11223',
+          issueType: 'Water Overflow',
+          title: 'Water overflowing onto market road',
+          description: 'Underground storage diverter appears slow to open causing water backup on street.',
+          location: 'Market Ridge Culvert',
+          ward: 'Ward 5',
+          priority: 'Urgent',
+          status: 'Submitted',
+          assignedTechnician: 'Unassigned',
+        },
+        {
+          complaintId: 'CMP-2026-003',
+          citizenName: 'Rohan Mohanty',
+          citizenMobile: '+91 98765 99887',
+          issueType: 'Water Leakage',
+          title: 'Minor leakage near solenoid valve junction',
+          description: 'Diverter pipe joint has a steady trickle leak into side gutter.',
+          location: 'East Side Channel',
+          ward: 'Ward 18',
+          priority: 'Medium',
+          status: 'In Progress',
+          assignedTechnician: 'Ramesh Sahoo (TECH-9021)',
+        },
+      ];
+      await Complaint.insertMany(demoComplaints);
+      console.log('✅ Seeded initial demo citizen complaints!');
+    }
+  } catch (err) {
+    // Avoid crashing if database is not available
   }
 }
 
-seedInitialComplaints();
 
 // ───────── POST /api/complaints (Citizen files complaint) ─────────
 router.post('/', async (req, res) => {
