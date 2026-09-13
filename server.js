@@ -28,18 +28,20 @@ const io = new SocketIOServer(server, {
   },
 });
 
-// Setup sockets and start sensor simulator & diagnostics engine
+// Setup sockets
 setupSockets(io);
-initSimulator(io);
-initDiagnostics(io);
-initMunicipalityNodes();
-startMunicipalitySimulation(io);
-initHistoricalDataset();
-initWeatherService();
-initPredictionAuditDataset();
 
 // Connect to Database & Start Server
-connectDB().finally(() => {
+connectDB().then(() => {
+  // Initialize services that require DB connection
+  initSimulator(io);
+  initDiagnostics(io);
+  initMunicipalityNodes();
+  startMunicipalitySimulation(io);
+  initHistoricalDataset();
+  initWeatherService();
+  initPredictionAuditDataset();
+}).finally(() => {
   server.listen(PORT, () => {
     console.log(`=========================================`);
     console.log(`🌊 SUOWMRS Server running on port ${PORT}`);
