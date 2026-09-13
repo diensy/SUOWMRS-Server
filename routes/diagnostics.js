@@ -111,30 +111,32 @@ router.post('/calibrate/:id', async (req, res) => {
 // POST /api/diagnostics/reboot — Soft reboot ESP32 controller
 router.post('/reboot', async (req, res) => {
   try {
-    let device = await Device.findOne({ deviceId: 'ESP32-UNIT-001' });
-    if (device) {
-      device.status = 'rebooting';
-      await device.save();
+    const device = await Device.findOneAndUpdate(
+      { deviceId: 'ESP32-UNIT-001' },
+      { status: 'rebooting', lastPing: new Date() },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
 
-      // Reset to online after 3 seconds
-      setTimeout(async () => {
-        try {
-          await Device.updateOne(
-            { deviceId: 'ESP32-UNIT-001' },
-            { status: 'online', uptimeSeconds: 12, lastPing: new Date(), pingLatencyMs: 14 }
-          );
-        } catch (e) {
-          console.error('Error resetting device post-reboot:', e);
-        }
-      }, 3000);
-    }
+    // Reset to online after 3 seconds
+    setTimeout(async () => {
+      try {
+        await Device.updateOne(
+          { deviceId: 'ESP32-UNIT-001' },
+          { status: 'online', uptimeSeconds: 12, lastPing: new Date(), pingLatencyMs: 14 }
+        );
+      } catch (e) {
+        console.error('Error resetting device post-reboot:', e);
+      }
+    }, 3000);
 
     res.json({
       success: true,
       message: 'ESP32 controller reboot signal dispatched. Telemetry node reconnecting...',
+      device,
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to send reboot signal' });
+    console.error('Error in /api/diagnostics/reboot:', err);
+    res.status(500).json({ error: 'Failed to send reboot signal', details: err.message });
   }
 });
 

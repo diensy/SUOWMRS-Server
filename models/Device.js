@@ -18,7 +18,7 @@ const deviceSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['online', 'offline', 'degraded'],
+      enum: ['online', 'offline', 'degraded', 'rebooting'],
       default: 'online',
     },
     wifiSignalDbm: {
@@ -57,6 +57,10 @@ const deviceSchema = new mongoose.Schema(
     cpuTempCelsius: {
       type: Number,
       default: 38.4,
+    },
+    pingLatencyMs: {
+      type: Number,
+      default: 14,
     },
     lastPing: {
       type: Date,
