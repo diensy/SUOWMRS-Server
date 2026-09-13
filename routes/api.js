@@ -16,7 +16,9 @@ router.get('/health', (req, res) => {
 // System info
 router.get('/info', (req, res) => {
   res.json({
-    name: 'Smart Underground Overflow & Water Monitoring / Reuse System (SUOWMRS)',
+    name: 'Smart Underground Overflow Water Management and Reuse System (SUOWMRS)',
+    tagline: 'One Smart Platform for Flood, Rainwater & Greywater Management.',
+    description: 'A next-generation AI & IoT platform for smart flood prevention, rainwater harvesting, greywater recycling, and real-time water management—all in one intelligent underground system.',
     blueprintPhases: [
       { phase: 0, title: 'Project Setup & Design System', status: 'Completed' },
       { phase: 1, title: 'Live Water-Level Monitoring', status: 'Upcoming' },

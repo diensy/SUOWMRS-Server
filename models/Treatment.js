@@ -17,6 +17,17 @@ const treatmentSchema = new mongoose.Schema({
     industrial: { type: Number, default: 500 },
   },
   treatmentEfficiency: { type: Number, default: 73 }, // percent
+  filtrationStatus: {
+    type: String,
+    enum: ['ACTIVE', 'MAINTENANCE_PAUSED'],
+    default: 'ACTIVE',
+  },
+  gardeningSession: {
+    active: { type: Boolean, default: false },
+    flowRate: { type: Number, default: 0 }, // L/min
+    volumeDispensed: { type: Number, default: 0 }, // L
+    soilMoisture: { type: Number, default: 48 }, // percent
+  },
   timestamp: { type: Date, default: Date.now },
 });
 
