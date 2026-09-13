@@ -14,9 +14,16 @@ let simulatorInterval = null;
 let currentLevel = 42;
 let trend = 1; // +1 rising, -1 falling
 let lastStatus = 'normal';
+let manualValveStatus = null; // null (automatic), 'OPEN', 'STANDBY'
 
 const TANK_CAPACITY = 10000; // litres
 const FLOW_RATE_PER_PERCENT = 40; // litres per % of water level
+
+export const setManualValveOverride = (action) => {
+  manualValveStatus = action;
+};
+
+export const getManualValveStatus = () => manualValveStatus;
 
 export const initSimulator = (socketIo) => {
   io = socketIo;
@@ -45,13 +52,21 @@ const startSimulator = () => {
   if (simulatorInterval) clearInterval(simulatorInterval);
 
   simulatorInterval = setInterval(async () => {
-    // Simulate realistic sensor fluctuation
-    const change = (Math.random() * 4 - 1) * trend;
-    currentLevel = Math.max(10, Math.min(98, currentLevel + change));
+    // Determine valve diversion state
+    const isManual = manualValveStatus !== null;
+    const shouldOpenValve = isManual ? (manualValveStatus === 'OPEN') : (currentLevel >= 75);
 
-    // Reverse trend at extremes
-    if (currentLevel >= 92) trend = -1;
-    if (currentLevel <= 18) trend = 1;
+    if (shouldOpenValve) {
+      // Diverter valve actively draining floodwater into reservoir
+      currentLevel = Math.max(12, currentLevel - (Math.random() * 2.5 + 1.5));
+      trend = -1;
+    } else {
+      // Normal rainwater inflow fluctuation
+      const change = (Math.random() * 4 - 1) * trend;
+      currentLevel = Math.max(10, Math.min(98, currentLevel + change));
+      if (currentLevel >= 92) trend = -1;
+      if (currentLevel <= 18) trend = 1;
+    }
 
     const status = getStatus(currentLevel);
     const depthMeters = parseFloat((currentLevel * 0.04).toFixed(2));
@@ -101,15 +116,15 @@ const startSimulator = () => {
         lastStatus = status;
       }
 
-      // 4. Update storage based on water level
-      const shouldOpenValve = currentLevel >= 75;
-      const inFlowRate = shouldOpenValve ? parseFloat((currentLevel * 2.2).toFixed(1)) : 0;
+      // 4. Update storage based on water level and manual override
+      const inFlowRate = shouldOpenValve ? parseFloat((Math.max(60, currentLevel * 2.5)).toFixed(1)) : 0;
 
       const latestStorage = await Storage.findOne().sort({ timestamp: -1 });
       let currentVolume = latestStorage ? latestStorage.currentVolume : 7200;
 
       if (shouldOpenValve && currentVolume < TANK_CAPACITY) {
-        currentVolume = Math.min(TANK_CAPACITY, currentVolume + inFlowRate * (5 / 60));
+        // Diversion actively fills underground cistern
+        currentVolume = Math.min(TANK_CAPACITY, currentVolume + (inFlowRate * (5 / 60) * 3));
       }
 
       const fillPercentage = parseFloat(((currentVolume / TANK_CAPACITY) * 100).toFixed(1));
@@ -119,6 +134,7 @@ const startSimulator = () => {
         fillPercentage,
         valveStatus: shouldOpenValve ? 'OPEN' : 'STANDBY',
         inFlowRate,
+        isManualOverride: isManual,
       });
 
       if (io) {

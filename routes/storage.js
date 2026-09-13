@@ -1,5 +1,7 @@
 import express from 'express';
 import Storage from '../models/Storage.js';
+import { setManualValveOverride } from '../services/sensorSimulator.js';
+import { io } from '../server.js';
 
 const router = express.Router();
 
@@ -31,15 +33,34 @@ router.post('/valve', async (req, res) => {
       return res.status(400).json({ error: 'Invalid valve action. Use OPEN or STANDBY.' });
     }
 
+    // Set persistent override in simulator engine
+    setManualValveOverride(action);
+
     const latest = await Storage.findOne().sort({ timestamp: -1 });
+    const currentVolume = latest?.currentVolume || 7200;
+    const inFlowRate = action === 'OPEN' ? 180 : 0;
+
     const newRecord = await Storage.create({
       totalCapacity: latest?.totalCapacity || 10000,
-      currentVolume: latest?.currentVolume || 7200,
-      fillPercentage: latest?.fillPercentage || 72,
+      currentVolume,
+      fillPercentage: parseFloat(((currentVolume / 10000) * 100).toFixed(1)),
       valveStatus: action,
-      inFlowRate: action === 'OPEN' ? 180 : 0,
+      inFlowRate,
       isManualOverride: true,
     });
+
+    // Immediate WebSocket broadcast to all connected dashboards
+    if (io) {
+      io.emit('storage:update', {
+        currentVolume: newRecord.currentVolume,
+        fillPercentage: newRecord.fillPercentage,
+        valveStatus: newRecord.valveStatus,
+        inFlowRate: newRecord.inFlowRate,
+        totalCapacity: newRecord.totalCapacity,
+        timestamp: newRecord.timestamp,
+        isManualOverride: true,
+      });
+    }
 
     res.json({
       success: true,
