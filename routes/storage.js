@@ -37,8 +37,12 @@ router.post('/valve', async (req, res) => {
     setManualValveOverride(action);
 
     const latest = await Storage.findOne().sort({ timestamp: -1 });
-    const currentVolume = latest?.currentVolume || 7200;
+    let currentVolume = latest?.currentVolume || 7200;
     const inFlowRate = action === 'OPEN' ? 180 : 0;
+
+    if (action === 'OPEN' && currentVolume > 3000) {
+      currentVolume = Math.max(2500, currentVolume - 200);
+    }
 
     const newRecord = await Storage.create({
       totalCapacity: latest?.totalCapacity || 10000,

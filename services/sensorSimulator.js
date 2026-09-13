@@ -116,15 +116,24 @@ const startSimulator = () => {
         lastStatus = status;
       }
 
-      // 4. Update storage based on water level and manual override
-      const inFlowRate = shouldOpenValve ? parseFloat((Math.max(60, currentLevel * 2.5)).toFixed(1)) : 0;
-
+      // 4. Update storage:
+      // When valve is OPEN, stored water is actively discharged/drained to treatment & reuse
       const latestStorage = await Storage.findOne().sort({ timestamp: -1 });
       let currentVolume = latestStorage ? latestStorage.currentVolume : 7200;
 
-      if (shouldOpenValve && currentVolume < TANK_CAPACITY) {
-        // Diversion actively fills underground cistern
-        currentVolume = Math.min(TANK_CAPACITY, currentVolume + (inFlowRate * (5 / 60) * 3));
+      let inFlowRate = 0;
+      if (shouldOpenValve) {
+        // Drain valve is OPEN: actively draining water to relieve 100% capacity
+        const drainRate = 180 + Math.floor(Math.random() * 40); // 180 - 220 L/min
+        currentVolume = Math.max(2500, currentVolume - (drainRate * (5 / 60) * 3));
+        inFlowRate = drainRate;
+      } else {
+        // Normal standby: gradual reuse consumption if high, or slight stabilization
+        if (currentVolume > 7500) {
+          currentVolume = Math.max(6800, currentVolume - (Math.random() * 35 + 15));
+        } else if (currentLevel > 65) {
+          currentVolume = Math.min(8800, currentVolume + (Math.random() * 40 + 20));
+        }
       }
 
       const fillPercentage = parseFloat(((currentVolume / TANK_CAPACITY) * 100).toFixed(1));
