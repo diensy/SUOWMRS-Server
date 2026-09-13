@@ -1,5 +1,6 @@
 import express from 'express';
 import Treatment from '../models/Treatment.js';
+import Storage from '../models/Storage.js';
 import { io } from '../server.js';
 
 const router = express.Router();
@@ -116,15 +117,46 @@ router.post('/gardening', async (req, res) => {
     };
 
     const isStarting = action === 'START';
+    let newStorageRecord = null;
 
     if (isStarting) {
       const volNum = parseInt(volume, 10) || 200;
       currentAvailable = Math.max(0, currentAvailable - volNum);
       allocations.gardening = (allocations.gardening || 1800) + volNum;
+
+      // Draw down from Underground Storage Cistern to supply treatment & gardening
+      try {
+        const latestStorage = await Storage.findOne().sort({ timestamp: -1 });
+        if (latestStorage) {
+          const newVol = Math.max(1200, latestStorage.currentVolume - volNum);
+          const totalCap = latestStorage.totalCapacity || 10000;
+          newStorageRecord = await Storage.create({
+            totalCapacity: totalCap,
+            currentVolume: newVol,
+            fillPercentage: parseFloat(((newVol / totalCap) * 100).toFixed(1)),
+            valveStatus: latestStorage.valveStatus || 'STANDBY',
+            inFlowRate: 45,
+            isManualOverride: latestStorage.isManualOverride || false,
+          });
+
+          if (io) {
+            io.emit('storage:update', {
+              currentVolume: newStorageRecord.currentVolume,
+              fillPercentage: newStorageRecord.fillPercentage,
+              valveStatus: newStorageRecord.valveStatus,
+              inFlowRate: newStorageRecord.inFlowRate,
+              totalCapacity: newStorageRecord.totalCapacity,
+              timestamp: newStorageRecord.timestamp,
+            });
+          }
+        }
+      } catch (storageErr) {
+        console.warn('[Treatment] Could not update storage volume on gardening start:', storageErr);
+      }
     }
 
     const updated = await Treatment.create({
-      storedWater: latest?.storedWater || 8500,
+      storedWater: newStorageRecord ? newStorageRecord.currentVolume : (latest?.storedWater || 8500),
       treatedWater: latest?.treatedWater || 6200,
       availableForReuse: currentAvailable,
       qualityStatus: latest?.qualityStatus || 'good',
@@ -154,6 +186,7 @@ router.post('/gardening', async (req, res) => {
         ? `Gardening water dispenser active: ${volume}L scheduled at 45 L/min.`
         : 'Gardening water dispenser shut off.',
       treatment: updated,
+      storage: newStorageRecord || undefined,
     });
   } catch (err) {
     console.error('Failed to toggle gardening reuse:', err);
