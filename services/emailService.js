@@ -1,789 +1,483 @@
-import nodemailer from 'nodemailer';
+// ─────────────────────────────────────────────────────────────
+// SUOWMRS Email Service — delivered over HTTPS via the Brevo API.
+// (Hosts such as Render block outbound SMTP, so no SMTP transport here.)
+// ─────────────────────────────────────────────────────────────
 
-// ── Create Transporter ──
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT || '587'),
-    secure: false, // STARTTLS
-    auth: {
-      user: process.env.SMTP_USER || '',
-      pass: process.env.SMTP_PASS || '',
-    },
-    tls: { rejectUnauthorized: false },
-    // Fail fast if the SMTP host is unreachable so API requests (e.g. /send-otp)
-    // don't hang for minutes waiting on nodemailer's default timeouts.
-    connectionTimeout: 10_000,
-    greetingTimeout: 10_000,
-    socketTimeout: 15_000,
-  });
-};
-
-const FROM = process.env.EMAIL_FROM || 'SUOWMRS Notification <noreply@suowmrs.in>';
-
-// ── Brevo HTTPS transport (used when BREVO_API_KEY is set) ──
-// Hosts like Render block outbound SMTP ports on free instances, so in
-// production we deliver over HTTPS instead. The sender address must be a
-// verified sender in the Brevo account.
 const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
-
-const parseFrom = (from) => {
-  const match = from.match(/^\s*(?:"?([^"<]*)"?\s*)?<([^>]+)>\s*$/);
-  return match
-    ? { name: (match[1] || 'SUOWMRS').trim(), email: match[2].trim() }
-    : { name: 'SUOWMRS', email: from.trim() };
+const SENDER = {
+  name: process.env.BREVO_SENDER_NAME || 'SUOWMRS',
+  email: process.env.BREVO_SENDER_EMAIL || '',
 };
-
-const sendViaBrevo = async ({ to, subject, html }) => {
-  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'api-key': BREVO_API_KEY,
-      'content-type': 'application/json',
-      accept: 'application/json',
-    },
-    body: JSON.stringify({
-      sender: parseFrom(FROM),
-      to: [{ email: to }],
-      subject,
-      htmlContent: html,
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(`Brevo ${res.status}: ${data?.message || data?.code || 'request failed'}`);
-  }
-  return { messageId: data?.messageId };
-};
-
-// ── Premium Modern Email Template Wrapper ──
-const baseTemplate = ({ title, subtitle, badgeText = 'OFFICIAL NOTIFICATION', badgeColor = '#0EA5E9', content }) => `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <meta http-equiv="X-UA-Compatible" content="IE=edge"/>
-  <title>${title || 'SUOWMRS System Notification'}</title>
-  <!--[if mso]>
-  <style type="text/css">
-    body, table, td {font-family: Arial, Helvetica, sans-serif !important;}
-  </style>
-  <![endif]-->
-  <style>
-    * { margin:0; padding:0; box-sizing:border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-      background-color: #0B1120;
-      color: #E2E8F0;
-      line-height: 1.6;
-      -webkit-text-size-adjust: 100%;
-      -ms-text-size-adjust: 100%;
-    }
-    .wrapper {
-      max-width: 620px;
-      margin: 0 auto;
-      padding: 32px 16px;
-    }
-    .main-card {
-      background: #0F172A;
-      border: 1px solid rgba(56, 189, 248, 0.25);
-      border-radius: 20px;
-      overflow: hidden;
-      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.5), 0 0 40px rgba(14, 165, 233, 0.1);
-    }
-    .header {
-      background: linear-gradient(135deg, #0284C7 0%, #0F4C5C 50%, #0369A1 100%);
-      padding: 36px 32px;
-      text-align: center;
-      position: relative;
-    }
-    .logo-container {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      border-radius: 14px;
-      padding: 8px 16px;
-      margin-bottom: 14px;
-    }
-    .logo-text {
-      font-size: 19px;
-      font-weight: 800;
-      color: #ffffff;
-      letter-spacing: 1.5px;
-      text-transform: uppercase;
-      font-family: 'Segoe UI', Roboto, sans-serif;
-    }
-    .logo-text span {
-      color: #38BDF8;
-    }
-    .header-badge {
-      display: inline-block;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 1.2px;
-      text-transform: uppercase;
-      color: #E0F2FE;
-      background: rgba(14, 165, 233, 0.3);
-      border: 1px solid rgba(125, 211, 252, 0.4);
-      padding: 4px 12px;
-      border-radius: 9999px;
-      margin-bottom: 12px;
-    }
-    .header h1 {
-      font-size: 24px;
-      font-weight: 800;
-      color: #FFFFFF;
-      margin-bottom: 6px;
-      letter-spacing: -0.5px;
-    }
-    .header p {
-      font-size: 13px;
-      color: rgba(224, 242, 254, 0.85);
-      max-width: 480px;
-      margin: 0 auto;
-      line-height: 1.5;
-    }
-    .body {
-      padding: 34px 32px 28px 32px;
-      background: #0F172A;
-    }
-    .greeting {
-      font-size: 16px;
-      color: #F1F5F9;
-      margin-bottom: 14px;
-      font-weight: 600;
-    }
-    .message {
-      font-size: 14px;
-      color: #94A3B8;
-      line-height: 1.7;
-      margin-bottom: 22px;
-    }
-    .info-table {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0;
-      margin: 20px 0;
-      background: rgba(15, 23, 42, 0.6);
-      border: 1px solid rgba(56, 189, 248, 0.15);
-      border-radius: 12px;
-      overflow: hidden;
-    }
-    .info-table tr:not(:last-child) td {
-      border-bottom: 1px solid rgba(56, 189, 248, 0.1);
-    }
-    .info-table td {
-      padding: 12px 16px;
-      font-size: 13px;
-      color: #CBD5E1;
-    }
-    .info-table td:first-child {
-      font-weight: 600;
-      color: #7DD3FC;
-      width: 40%;
-      background: rgba(2, 132, 199, 0.05);
-    }
-    .badge {
-      display: inline-block;
-      padding: 4px 12px;
-      border-radius: 9999px;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.3px;
-    }
-    .badge-success { background: rgba(16, 185, 129, 0.2); color: #34D399; border: 1px solid rgba(52, 211, 153, 0.4); }
-    .badge-warning { background: rgba(245, 158, 11, 0.2); color: #FBBF24; border: 1px solid rgba(251, 191, 36, 0.4); }
-    .badge-danger  { background: rgba(239, 68, 68, 0.2);  color: #F87171; border: 1px solid rgba(248, 113, 113, 0.4); }
-    .badge-info    { background: rgba(14, 165, 233, 0.2); color: #38BDF8; border: 1px solid rgba(56, 189, 248, 0.4); }
-    .badge-purple  { background: rgba(168, 85, 247, 0.2); color: #C084FC; border: 1px solid rgba(192, 132, 252, 0.4); }
-
-    .btn {
-      display: inline-block;
-      padding: 14px 30px;
-      background: linear-gradient(135deg, #0284C7 0%, #0284C7 100%);
-      color: #ffffff !important;
-      text-decoration: none;
-      border-radius: 12px;
-      font-weight: 700;
-      font-size: 14px;
-      letter-spacing: 0.3px;
-      box-shadow: 0 4px 15px rgba(2, 132, 199, 0.4);
-      margin-top: 10px;
-      text-align: center;
-    }
-    .btn-emerald {
-      background: linear-gradient(135deg, #059669 0%, #10B981 100%);
-      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
-    }
-    .btn-danger {
-      background: linear-gradient(135deg, #DC2626 0%, #EF4444 100%);
-      box-shadow: 0 4px 15px rgba(239, 68, 68, 0.4);
-    }
-    .highlight-card {
-      background: linear-gradient(135deg, rgba(14, 165, 233, 0.1) 0%, rgba(2, 132, 199, 0.05) 100%);
-      border: 1px solid rgba(56, 189, 248, 0.25);
-      border-radius: 14px;
-      padding: 20px;
-      margin: 20px 0;
-      text-align: center;
-    }
-    .alert-box {
-      background: rgba(239, 68, 68, 0.1);
-      border: 1px solid rgba(239, 68, 68, 0.3);
-      border-radius: 12px;
-      padding: 14px 18px;
-      margin: 18px 0;
-    }
-    .alert-box p {
-      color: #FCA5A5;
-      font-size: 13px;
-      margin: 0;
-    }
-    .security-note {
-      font-size: 12px;
-      color: #64748B;
-      line-height: 1.6;
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
-      padding-top: 16px;
-      margin-top: 24px;
-    }
-    .footer {
-      background: #090E17;
-      padding: 24px 32px;
-      text-align: center;
-      border-top: 1px solid rgba(56, 189, 248, 0.12);
-    }
-    .footer p {
-      font-size: 12px;
-      color: #475569;
-      line-height: 1.7;
-    }
-    .footer a {
-      color: #38BDF8;
-      text-decoration: none;
-    }
-    .footer .links {
-      margin-bottom: 10px;
-    }
-    .footer .links a {
-      margin: 0 8px;
-      font-size: 11px;
-      color: #64748B;
-    }
-  </style>
-</head>
-<body>
-  <div class="wrapper">
-    <div class="main-card">
-      <div class="header">
-        <div class="logo-container">
-          <span class="logo-text">💧 SUOW<span>MRS</span></span>
-        </div>
-        <br/>
-        <div class="header-badge" style="background:${badgeColor}25; border-color:${badgeColor}60; color:#FFFFFF;">
-          ${badgeText}
-        </div>
-        <h1>${title}</h1>
-        <p>${subtitle || 'Smart Urban Overflow & Water Management & Reuse System'}</p>
-      </div>
-
-      <div class="body">
-        ${content}
-      </div>
-
-      <div class="footer">
-        <div class="links">
-          <a href="#">Official Portal</a> •
-          <a href="#">Security Center</a> •
-          <a href="#">Help & Support</a>
-        </div>
-        <p>This is an automated system notification from the SUOWMRS Central Command Grid.<br/>
-        Please do not reply directly to this email address.</p>
-        <p style="margin-top:8px; font-size:11px; color:#334155;">
-          © 2026 SUOWMRS • Municipal Water Grid Infrastructure • All Rights Reserved.
-        </p>
-      </div>
-    </div>
-  </div>
-</body>
-</html>
-`;
+const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL || 'support@suowmrs.in';
 
 // ── Generic Send Function ──
 export const sendEmail = async ({ to, subject, html }) => {
   try {
-    const info = BREVO_API_KEY
-      ? await sendViaBrevo({ to, subject, html })
-      : await createTransporter().sendMail({ from: FROM, to, subject, html });
-    console.log(`✉️ Email successfully dispatched to ${to} via ${BREVO_API_KEY ? 'Brevo' : 'SMTP'}: [${subject}] (ID: ${info?.messageId || 'ok'})`);
-    return { success: true, messageId: info?.messageId };
+    if (!BREVO_API_KEY || !SENDER.email) {
+      throw new Error('BREVO_API_KEY / BREVO_SENDER_EMAIL not configured');
+    }
+
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': BREVO_API_KEY,
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        sender: SENDER,
+        to: [{ email: to }],
+        subject,
+        htmlContent: html,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(`Brevo ${res.status}: ${data?.message || data?.code || 'request failed'}`);
+    }
+
+    console.log(`✉️ Email dispatched to ${to}: [${subject}] (ID: ${data?.messageId || 'ok'})`);
+    return { success: true, messageId: data?.messageId };
   } catch (error) {
     console.error(`⚠️ Email dispatch failed to ${to}:`, error.message);
-    // Don't crash if SMTP is unconfigured or credentials are in demo mode
+    // Don't crash callers — they decide how to surface the failure
     return { success: false, error: error.message };
   }
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+// Layout — classic, light, table-based with inline styles so it
+// renders consistently in Gmail, Outlook and mobile clients.
+// ═════════════════════════════════════════════════════════════
+
+const COLORS = {
+  brand: '#0F4C5C',
+  brandDark: '#0A333E',
+  text: '#1E293B',
+  muted: '#64748B',
+  faint: '#94A3B8',
+  border: '#E2E8F0',
+  panel: '#F8FAFC',
+  page: '#F1F5F9',
+  success: '#15803D',
+  warning: '#B45309',
+  danger: '#B91C1C',
+  info: '#0369A1',
+  purple: '#6D28D9',
+};
+
+const FONT_BODY = "Arial, Helvetica, 'Segoe UI', sans-serif";
+const FONT_HEAD = "Georgia, 'Times New Roman', serif";
+const FONT_MONO = "'Courier New', Courier, monospace";
+
+// Escape user-supplied values before interpolating them into HTML
+const esc = (v) =>
+  String(v ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+
+const fmtINR = (paise) =>
+  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(paise / 100);
+
+const fmtDate = (d = new Date()) =>
+  new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' });
+
+const fmtDateTime = (d = new Date()) =>
+  `${new Date(d).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
+
+// ── Building blocks ──
+
+const greeting = (name) =>
+  `<p style="margin:0 0 14px; font-family:${FONT_BODY}; font-size:16px; color:${COLORS.text};">${esc(name)},</p>`;
+
+const paragraph = (html) =>
+  `<p style="margin:0 0 18px; font-family:${FONT_BODY}; font-size:15px; line-height:1.65; color:${COLORS.text};">${html}</p>`;
+
+const codeBox = ({ label, code, note, color = COLORS.brand }) => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0; border:1px solid ${COLORS.border}; border-radius:6px; background:${COLORS.panel};">
+    <tr>
+      <td align="center" style="padding:22px 16px;">
+        <div style="font-family:${FONT_BODY}; font-size:11px; font-weight:bold; letter-spacing:2px; text-transform:uppercase; color:${COLORS.muted}; margin-bottom:10px;">${esc(label)}</div>
+        <div style="font-family:${FONT_MONO}; font-size:36px; font-weight:bold; letter-spacing:12px; color:${color}; padding-left:12px;">${esc(code)}</div>
+        ${note ? `<div style="font-family:${FONT_BODY}; font-size:12px; color:${COLORS.muted}; margin-top:10px;">${note}</div>` : ''}
+      </td>
+    </tr>
+  </table>`;
+
+// rows: [[label, valueHtml], ...] — falsy rows are skipped
+const details = (rows) => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 20px; border:1px solid ${COLORS.border}; border-radius:6px; border-collapse:separate; overflow:hidden;">
+    ${rows.filter(Boolean).map(([label, value], i, arr) => `
+    <tr>
+      <td style="padding:11px 16px; width:40%; font-family:${FONT_BODY}; font-size:12px; font-weight:bold; letter-spacing:0.5px; text-transform:uppercase; color:${COLORS.muted}; background:${COLORS.panel}; border-bottom:${i < arr.length - 1 ? `1px solid ${COLORS.border}` : 'none'}; vertical-align:top;">${esc(label)}</td>
+      <td style="padding:11px 16px; font-family:${FONT_BODY}; font-size:14px; color:${COLORS.text}; border-bottom:${i < arr.length - 1 ? `1px solid ${COLORS.border}` : 'none'}; vertical-align:top;">${value}</td>
+    </tr>`).join('')}
+  </table>`;
+
+const badge = (text, color = COLORS.info) =>
+  `<span style="display:inline-block; padding:3px 10px; border:1px solid ${color}; border-radius:3px; font-family:${FONT_BODY}; font-size:11px; font-weight:bold; letter-spacing:1px; text-transform:uppercase; color:${color};">${esc(text)}</span>`;
+
+const strong = (text, color = COLORS.text) =>
+  `<strong style="color:${color};">${esc(text)}</strong>`;
+
+const button = (text, href, color = COLORS.brand) => `
+  <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 24px;">
+    <tr>
+      <td align="center" bgcolor="${color}" style="border-radius:4px;">
+        <a href="${esc(href)}" target="_blank" style="display:inline-block; padding:13px 30px; font-family:${FONT_BODY}; font-size:14px; font-weight:bold; color:#FFFFFF; text-decoration:none; border-radius:4px;">${esc(text)}</a>
+      </td>
+    </tr>
+  </table>`;
+
+const buttons = (...items) => {
+  const visible = items.filter(Boolean);
+  if (!visible.length) return '';
+  return `
+  <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:6px auto 24px;">
+    <tr>
+      ${visible.map(([text, href, color = COLORS.brand]) => `
+      <td align="center" bgcolor="${color}" style="border-radius:4px;">
+        <a href="${esc(href)}" target="_blank" style="display:inline-block; padding:13px 24px; font-family:${FONT_BODY}; font-size:14px; font-weight:bold; color:#FFFFFF; text-decoration:none; border-radius:4px;">${esc(text)}</a>
+      </td>`).join('<td style="width:12px; font-size:0;">&nbsp;</td>')}
+    </tr>
+  </table>`;
+};
+
+const alertBox = (html, color = COLORS.danger, bg = '#FEF2F2') => `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px;">
+    <tr>
+      <td style="padding:14px 16px; background:${bg}; border-left:4px solid ${color}; font-family:${FONT_BODY}; font-size:13px; line-height:1.6; color:${COLORS.text};">${html}</td>
+    </tr>
+  </table>`;
+
+const note = (html) =>
+  `<p style="margin:22px 0 0; padding-top:16px; border-top:1px solid ${COLORS.border}; font-family:${FONT_BODY}; font-size:12px; line-height:1.65; color:${COLORS.muted};">${html}</p>`;
+
+// ── Page wrapper ──
+const layout = ({ title, eyebrow, accent = COLORS.brand, content }) => `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="x-apple-disable-message-reformatting" />
+  <title>${esc(title)}</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+</head>
+<body style="margin:0; padding:0; background:${COLORS.page}; -webkit-text-size-adjust:100%;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${COLORS.page};">
+    <tr>
+      <td align="center" style="padding:32px 12px;">
+        <!--[if mso]><table role="presentation" width="600" cellpadding="0" cellspacing="0"><tr><td><![endif]-->
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; background:#FFFFFF; border:1px solid ${COLORS.border}; border-radius:8px; border-collapse:separate; overflow:hidden;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:${COLORS.brand}; padding:26px 36px; text-align:center;">
+              <div style="font-family:${FONT_HEAD}; font-size:26px; letter-spacing:4px; color:#FFFFFF;">SUOWMRS</div>
+              <div style="font-family:${FONT_BODY}; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#B6DDE5; margin-top:6px;">Smart Urban Overflow &amp; Water Management System</div>
+            </td>
+          </tr>
+          <tr><td style="height:4px; background:${accent}; font-size:0; line-height:0;">&nbsp;</td></tr>
+
+          <!-- Title -->
+          <tr>
+            <td style="padding:32px 36px 8px;">
+              ${eyebrow ? `<div style="font-family:${FONT_BODY}; font-size:11px; font-weight:bold; letter-spacing:2px; text-transform:uppercase; color:${accent}; margin-bottom:8px;">${esc(eyebrow)}</div>` : ''}
+              <h1 style="margin:0; font-family:${FONT_HEAD}; font-size:24px; font-weight:normal; line-height:1.3; color:${COLORS.text};">${esc(title)}</h1>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:16px 36px 32px;">
+              ${content}
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:20px 36px; background:${COLORS.panel}; border-top:1px solid ${COLORS.border}; text-align:center;">
+              <p style="margin:0 0 6px; font-family:${FONT_BODY}; font-size:12px; line-height:1.6; color:${COLORS.muted};">
+                This is an automated message from SUOWMRS. Please do not reply to this email.<br/>
+                Need help? Contact <a href="mailto:${SUPPORT_EMAIL}" style="color:${COLORS.brand}; text-decoration:none;">${SUPPORT_EMAIL}</a>
+              </p>
+              <p style="margin:0; font-family:${FONT_BODY}; font-size:11px; color:${COLORS.faint};">
+                &copy; ${new Date().getFullYear()} SUOWMRS &middot; Municipal Water Infrastructure &middot; All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+        <!--[if mso]></td></tr></table><![endif]-->
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
+
+// ═════════════════════════════════════════════════════════════
 // 1. OTP Verification Email (Registration)
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendOtpEmail = async ({ to, fullName, otp }) => {
   const content = `
-    <div class="greeting">Hello ${fullName || 'Valued User'},</div>
-    <div class="message">
-      Thank you for registering on <strong>SUOWMRS</strong>. To verify your email address and activate your account access, please use the 6-digit one-time verification code below:
-    </div>
-
-    <div class="highlight-card">
-      <div style="font-size:11px; font-weight:700; color:#7DD3FC; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:8px;">
-        One-Time Verification Code
-      </div>
-      <div style="font-size:38px; font-weight:900; color:#38BDF8; letter-spacing:10px; font-family: 'Courier New', monospace; text-shadow: 0 0 15px rgba(56,189,248,0.5);">
-        ${otp}
-      </div>
-      <div style="font-size:12px; color:#94A3B8; margin-top:8px;">
-        ⏱️ Code expires in <strong style="color:#F1F5F9;">10 minutes</strong>
-      </div>
-    </div>
-
-    <div class="security-note">
-      🔒 <strong>Security Warning:</strong> Never share this OTP with anyone, including SUOWMRS personnel or municipality staff. If you did not initiate this registration request, please ignore this email safely.
-    </div>
+    ${greeting(`Hello ${fullName || 'there'}`)}
+    ${paragraph('Thank you for registering with <strong>SUOWMRS</strong>. Please use the verification code below to confirm your email address and continue with your registration.')}
+    ${codeBox({ label: 'Verification code', code: otp, note: 'This code expires in <strong>10 minutes</strong>.' })}
+    ${note('<strong>Security notice:</strong> Never share this code with anyone. SUOWMRS staff will never ask for it. If you did not start this registration, you can safely ignore this email.')}
   `;
 
   return sendEmail({
     to,
-    subject: `🔐 Your SUOWMRS Verification Code: ${otp}`,
-    html: baseTemplate({
-      title: 'Verify Your Email Address',
-      subtitle: 'Complete your registration on the Municipal Water Monitoring Portal',
-      badgeText: 'IDENTITY VERIFICATION',
-      badgeColor: '#0EA5E9',
-      content,
-    }),
+    subject: `Your SUOWMRS verification code: ${otp}`,
+    html: layout({ title: 'Verify your email address', eyebrow: 'Email verification', content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
-// 2. Forgot Password / Password Reset Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+// 2. Password Reset Email
+// ═════════════════════════════════════════════════════════════
 export const sendPasswordResetEmail = async ({ to, fullName, resetOtp, resetLink }) => {
   const content = `
-    <div class="greeting">Hello ${fullName || 'User'},</div>
-    <div class="message">
-      We received a request to reset the password for your <strong>SUOWMRS</strong> account. Use the secure authorization code below to configure a new password:
-    </div>
-
-    <div class="highlight-card" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(217, 119, 6, 0.05) 100%); border-color: rgba(245, 158, 11, 0.3);">
-      <div style="font-size:11px; font-weight:700; color:#FBBF24; letter-spacing:1.5px; text-transform:uppercase; margin-bottom:8px;">
-        Password Reset Code
-      </div>
-      <div style="font-size:38px; font-weight:900; color:#F59E0B; letter-spacing:10px; font-family: 'Courier New', monospace; text-shadow: 0 0 15px rgba(245,158,11,0.4);">
-        ${resetOtp}
-      </div>
-      <div style="font-size:12px; color:#94A3B8; margin-top:8px;">
-        ⏱️ This code is valid for <strong style="color:#F1F5F9;">15 minutes</strong>
-      </div>
-    </div>
-
-    ${
-      resetLink
-        ? `<div style="text-align:center; margin:20px 0;">
-             <a href="${resetLink}" class="btn" style="background:linear-gradient(135deg,#D97706,#F59E0B);">Reset Password Directly</a>
-           </div>`
-        : ''
-    }
-
-    <div class="security-note">
-      ⚠️ <strong>Didn't request this?</strong> If you did not ask to reset your password, someone may have entered your email address by mistake. Your account remains secure and no changes have been made.
-    </div>
+    ${greeting(`Hello ${fullName || 'there'}`)}
+    ${paragraph('We received a request to reset the password for your <strong>SUOWMRS</strong> account. Enter the code below to set a new password.')}
+    ${codeBox({ label: 'Password reset code', code: resetOtp, note: 'This code is valid for <strong>15 minutes</strong>.', color: COLORS.warning })}
+    ${resetLink ? button('Reset password', resetLink, COLORS.warning) : ''}
+    ${note("<strong>Didn't request this?</strong> Someone may have entered your email address by mistake. Your account is still secure and no changes have been made.")}
   `;
 
   return sendEmail({
     to,
-    subject: `🔑 Password Reset Code: ${resetOtp} | SUOWMRS`,
-    html: baseTemplate({
-      title: 'Reset Your Account Password',
-      subtitle: 'Authorize secure password modification for your SUOWMRS profile',
-      badgeText: 'SECURITY ALERT',
-      badgeColor: '#F59E0B',
-      content,
-    }),
+    subject: `Password reset code: ${resetOtp} — SUOWMRS`,
+    html: layout({ title: 'Reset your password', eyebrow: 'Account security', accent: COLORS.warning, content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 3. Password Reset Success Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendPasswordResetSuccessEmail = async ({ to, fullName }) => {
   const content = `
-    <div class="greeting">Hello ${fullName || 'User'},</div>
-    <div class="message">
-      This is a confirmation that the password for your <strong>SUOWMRS</strong> account has been successfully changed.
-    </div>
-
-    <table class="info-table">
-      <tr>
-        <td>Event</td>
-        <td><span class="badge badge-success">Password Updated</span></td>
-      </tr>
-      <tr>
-        <td>Timestamp</td>
-        <td>${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (IST)</td>
-      </tr>
-      <tr>
-        <td>Status</td>
-        <td>Active & Protected</td>
-      </tr>
-    </table>
-
-    <div class="security-note">
-      🚨 <strong>Security Advisory:</strong> If you did not perform this password change, please contact system administration or email <a href="mailto:support@suowmrs.in" style="color:#38BDF8;">support@suowmrs.in</a> immediately to freeze your account.
-    </div>
+    ${greeting(`Hello ${fullName || 'there'}`)}
+    ${paragraph('This confirms that the password for your <strong>SUOWMRS</strong> account was changed successfully.')}
+    ${details([
+      ['Event', badge('Password updated', COLORS.success)],
+      ['Date & time', esc(fmtDateTime())],
+      ['Account status', 'Active'],
+    ])}
+    ${button('Sign in to SUOWMRS', `${CLIENT_URL}/login`)}
+    ${note(`<strong>Wasn't you?</strong> If you did not change your password, contact <a href="mailto:${SUPPORT_EMAIL}" style="color:${COLORS.brand};">${SUPPORT_EMAIL}</a> immediately so we can secure your account.`)}
   `;
 
   return sendEmail({
     to,
-    subject: `✅ Password Successfully Changed | SUOWMRS`,
-    html: baseTemplate({
-      title: 'Password Changed Successfully',
-      subtitle: 'Your SUOWMRS security credentials have been updated',
-      badgeText: 'SECURITY CONFIRMATION',
-      badgeColor: '#10B981',
-      content,
-    }),
+    subject: 'Your password was changed — SUOWMRS',
+    html: layout({ title: 'Password changed successfully', eyebrow: 'Account security', accent: COLORS.success, content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 4. Account Verification Status Update (Approved / Rejected)
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendAccountStatusEmail = async ({ to, fullName, role, status, reason, municipalityName }) => {
   const isApproved = status === 'Verified';
-  const badgeClass = isApproved ? 'badge-success' : 'badge-danger';
-  const badgeColor = isApproved ? '#10B981' : '#EF4444';
+  const accent = isApproved ? COLORS.success : COLORS.danger;
 
   const content = `
-    <div class="greeting">Hello ${fullName || 'User'},</div>
-    <div class="message">
-      ${
-        isApproved
-          ? `Congratulations! Your <strong>SUOWMRS</strong> account application has been reviewed and <strong style="color:#34D399;">APPROVED</strong> by the municipality administration.`
-          : `We regret to inform you that your <strong>SUOWMRS</strong> account application has been <strong style="color:#F87171;">REJECTED</strong> or suspended by the municipal administration.`
-      }
-    </div>
-
-    <table class="info-table">
-      <tr>
-        <td>Full Name</td>
-        <td><strong>${fullName}</strong></td>
-      </tr>
-      <tr>
-        <td>Designated Role</td>
-        <td><span class="badge badge-info">${role}</span></td>
-      </tr>
-      ${municipalityName ? `<tr><td>Municipality / Body</td><td>${municipalityName}</td></tr>` : ''}
-      <tr>
-        <td>Verification Status</td>
-        <td><span class="badge ${badgeClass}">${status.toUpperCase()}</span></td>
-      </tr>
-      <tr>
-        <td>Effective Date</td>
-        <td>${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}</td>
-      </tr>
-      ${reason ? `<tr><td>Remarks</td><td style="color:#F87171;">${reason}</td></tr>` : ''}
-    </table>
-
-    ${
-      isApproved
-        ? `<div style="text-align:center; margin:24px 0;">
-             <a href="http://localhost:5173/login" class="btn btn-emerald">Sign In To Portal Now</a>
-           </div>`
-        : `<div class="alert-box"><p>If you believe this was an error, please reach out to your municipal node administrator or support team.</p></div>`
-    }
-
-    <div class="security-note">
-      Official verification issued by SUOWMRS Urban Water Network Authority.
-    </div>
+    ${greeting(`Hello ${fullName || 'there'}`)}
+    ${paragraph(isApproved
+      ? `Good news — your <strong>SUOWMRS</strong> account has been reviewed and ${strong('approved', COLORS.success)} by the municipal administration. You can now sign in and access the portal.`
+      : `Your <strong>SUOWMRS</strong> account application has been reviewed and was ${strong('not approved', COLORS.danger)} by the municipal administration.`)}
+    ${details([
+      ['Full name', strong(fullName)],
+      ['Role', badge(role)],
+      municipalityName && ['Municipality', esc(municipalityName)],
+      ['Status', badge(status, accent)],
+      ['Effective date', esc(fmtDate())],
+      reason && ['Remarks', `<span style="color:${COLORS.danger};">${esc(reason)}</span>`],
+    ])}
+    ${isApproved
+      ? button('Sign in to SUOWMRS', `${CLIENT_URL}/login`, COLORS.success)
+      : alertBox('If you believe this decision was made in error, please contact your municipal administrator or our support team.')}
+    ${note('Verification notice issued by the SUOWMRS municipal administration.')}
   `;
 
   return sendEmail({
     to,
-    subject: `${isApproved ? '✅ Account Approved' : '❌ Account Application Update'} | SUOWMRS`,
-    html: baseTemplate({
-      title: isApproved ? 'Account Approved & Verified' : 'Account Verification Status',
-      subtitle: `Official notice regarding your access to the SUOWMRS Grid`,
-      badgeText: isApproved ? 'ACCESS GRANTED' : 'ACTION NOTICE',
-      badgeColor,
+    subject: isApproved ? 'Your SUOWMRS account has been approved' : 'Update on your SUOWMRS account application',
+    html: layout({
+      title: isApproved ? 'Your account has been approved' : 'Account verification update',
+      eyebrow: 'Account verification',
+      accent,
       content,
     }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 5. Municipality Admin / Role Assignment Update Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendAdminRoleChangedEmail = async ({ to, fullName, newRole, municipalityName, designation, updatedBy }) => {
   const isAdmin = newRole === 'Admin';
+
   const content = `
-    <div class="greeting">Hello ${fullName},</div>
-    <div class="message">
-      Your official account role and permissions in the <strong>SUOWMRS Central Command Grid</strong> have been updated by the system authority.
-    </div>
-
-    <table class="info-table">
-      <tr>
-        <td>Designated Authority Role</td>
-        <td><span class="badge ${isAdmin ? 'badge-purple' : 'badge-info'}">${newRole}</span></td>
-      </tr>
-      ${municipalityName ? `<tr><td>Municipal Jurisdiction</td><td><strong style="color:#38BDF8;">${municipalityName}</strong></td></tr>` : ''}
-      ${designation ? `<tr><td>Official Title / Designation</td><td>${designation}</td></tr>` : ''}
-      <tr>
-        <td>Granted Permissions</td>
-        <td>${isAdmin ? 'Full Municipal Grid Administration, Node Overrides, System Approvals & Diverter Controls' : 'Standard Assigned Role Clearance'}</td>
-      </tr>
-      <tr>
-        <td>Authorized By</td>
-        <td>${updatedBy || 'Central Municipal Authority'}</td>
-      </tr>
-      <tr>
-        <td>Effective From</td>
-        <td>${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} (IST)</td>
-      </tr>
-    </table>
-
-    <div style="text-align:center; margin:24px 0;">
-      <a href="http://localhost:5173/login" class="btn" style="background:linear-gradient(135deg, #7C3AED, #9333EA);">Access Admin Command Portal</a>
-    </div>
-
-    <div class="security-note">
-      🛡️ <strong>Administrative Notice:</strong> Administrative actions within SUOWMRS are audited and logged according to national urban water safety compliance standards.
-    </div>
+    ${greeting(`Hello ${fullName || 'there'}`)}
+    ${paragraph('Your role and permissions on <strong>SUOWMRS</strong> have been updated by the system administration. The details of your new assignment are below.')}
+    ${details([
+      ['New role', badge(newRole, isAdmin ? COLORS.purple : COLORS.info)],
+      municipalityName && ['Municipality', strong(municipalityName, COLORS.brand)],
+      designation && ['Designation', esc(designation)],
+      ['Permissions', isAdmin
+        ? 'Full municipal administration: user approvals, system overrides, alerts and diverter controls'
+        : 'Standard permissions for the assigned role'],
+      ['Updated by', esc(updatedBy || 'Central Municipal Authority')],
+      ['Effective from', esc(fmtDateTime())],
+    ])}
+    ${button(isAdmin ? 'Open the admin portal' : 'Sign in to SUOWMRS', `${CLIENT_URL}/login`, isAdmin ? COLORS.purple : COLORS.brand)}
+    ${note('Administrative actions in SUOWMRS are logged and audited in line with municipal water-safety compliance requirements.')}
   `;
 
   return sendEmail({
     to,
-    subject: `🏛️ Role Update: You are assigned as ${newRole} (${municipalityName || 'SUOWMRS'})`,
-    html: baseTemplate({
-      title: 'Municipal Role & Authority Update',
-      subtitle: 'Your administrative access rights have been reconfigured',
-      badgeText: 'AUTHORITY ASSIGNMENT',
-      badgeColor: '#A855F7',
-      content,
-    }),
+    subject: `Your role has been updated to ${newRole} — ${municipalityName || 'SUOWMRS'}`,
+    html: layout({ title: 'Your role has been updated', eyebrow: 'Role assignment', accent: isAdmin ? COLORS.purple : COLORS.info, content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 6. Payment Success Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendPaymentSuccessEmail = async ({ to, customerName, planLabel, amount, invoiceNumber, invoiceUrl, receiptUrl, nextDueDate }) => {
-  const formattedAmount = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount / 100);
-  const nextDue = nextDueDate ? new Date(nextDueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }) : 'N/A';
-
   const content = `
-    <div class="greeting">Dear ${customerName},</div>
-    <div class="message">
-      We have received and confirmed your payment for SUOWMRS water infrastructure and maintenance services.
-    </div>
-
-    <table class="info-table">
-      <tr><td>Invoice Number</td><td><strong>${invoiceNumber}</strong></td></tr>
-      <tr><td>Service / Plan</td><td>${planLabel}</td></tr>
-      <tr><td>Amount Paid</td><td><strong style="color:#34D399; font-size:15px;">${formattedAmount}</strong></td></tr>
-      <tr><td>Payment Status</td><td><span class="badge badge-success">PAID & SETTLED</span></td></tr>
-      <tr><td>Next Renewal Due</td><td>${nextDue}</td></tr>
-      <tr><td>Transaction Date</td><td>${new Date().toLocaleString('en-IN')}</td></tr>
-    </table>
-
-    <div style="text-align:center; margin:20px 0;">
-      ${invoiceUrl ? `<a class="btn" href="${invoiceUrl}" target="_blank" style="margin-right:8px;">📄 Download Invoice</a>` : ''}
-      ${receiptUrl ? `<a class="btn btn-emerald" href="${receiptUrl}" target="_blank">🧾 View Payment Receipt</a>` : ''}
-    </div>
-
-    <div class="security-note">
-      Thank you for supporting smart water recycling and sustainable urban drainage.
-    </div>
+    ${greeting(`Dear ${customerName || 'Customer'}`)}
+    ${paragraph('We have received your payment for SUOWMRS water infrastructure and maintenance services. Thank you.')}
+    ${details([
+      ['Invoice number', strong(invoiceNumber)],
+      ['Service / plan', esc(planLabel)],
+      ['Amount paid', strong(fmtINR(amount), COLORS.success)],
+      ['Status', badge('Paid', COLORS.success)],
+      ['Next renewal', nextDueDate ? esc(fmtDate(nextDueDate)) : 'N/A'],
+      ['Transaction date', esc(fmtDateTime())],
+    ])}
+    ${buttons(
+      invoiceUrl && ['Download invoice', invoiceUrl],
+      receiptUrl && ['View receipt', receiptUrl, COLORS.success],
+    )}
+    ${note('Thank you for supporting smart water recycling and sustainable urban drainage.')}
   `;
 
   return sendEmail({
     to,
-    subject: `✅ Payment Confirmed — ${planLabel} | SUOWMRS`,
-    html: baseTemplate({
-      title: 'Payment Received & Confirmed',
-      subtitle: 'Your transaction was successfully processed',
-      badgeText: 'PAYMENT RECEIPT',
-      badgeColor: '#10B981',
-      content,
-    }),
+    subject: `Payment confirmed — ${planLabel} — SUOWMRS`,
+    html: layout({ title: 'Payment received', eyebrow: 'Payment receipt', accent: COLORS.success, content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 7. Payment Failed Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendPaymentFailedEmail = async ({ to, customerName, planLabel, amount, failureReason, retryUrl }) => {
-  const formattedAmount = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount / 100);
-
   const content = `
-    <div class="greeting">Dear ${customerName},</div>
-    <div class="message">
-      We were unable to process your payment for <strong>${planLabel}</strong>. Your automated flood monitoring sensors and protection remain active without interruption.
-    </div>
-
-    <div class="alert-box">
-      <p>⚠️ <strong>Reason for Failure:</strong> ${failureReason || 'Card authorization declined by issuing bank.'}</p>
-    </div>
-
-    <table class="info-table">
-      <tr><td>Service / Plan</td><td>${planLabel}</td></tr>
-      <tr><td>Amount Due</td><td><strong style="color:#F87171;">${formattedAmount}</strong></td></tr>
-      <tr><td>Payment Status</td><td><span class="badge badge-danger">FAILED</span></td></tr>
-      <tr><td>Attempt Timestamp</td><td>${new Date().toLocaleString('en-IN')}</td></tr>
-    </table>
-
-    <div style="text-align:center; margin:22px 0;">
-      ${retryUrl ? `<a class="btn btn-danger" href="${retryUrl}" target="_blank">🔄 Retry Payment Now</a>` : ''}
-    </div>
-
-    <div class="security-note">
-      Please update your payment details or try an alternative UPI / Net Banking payment method to maintain continuous AMC service coverage.
-    </div>
+    ${greeting(`Dear ${customerName || 'Customer'}`)}
+    ${paragraph(`We were unable to process your payment for <strong>${esc(planLabel)}</strong>. Your flood-monitoring sensors and protection remain active for now.`)}
+    ${alertBox(`<strong>Reason:</strong> ${esc(failureReason || 'Card authorisation declined by the issuing bank.')}`)}
+    ${details([
+      ['Service / plan', esc(planLabel)],
+      ['Amount due', strong(fmtINR(amount), COLORS.danger)],
+      ['Status', badge('Failed', COLORS.danger)],
+      ['Attempted on', esc(fmtDateTime())],
+    ])}
+    ${retryUrl ? button('Retry payment', retryUrl, COLORS.danger) : ''}
+    ${note('Please update your payment details or try an alternative method (UPI / net banking) to keep your maintenance coverage uninterrupted.')}
   `;
 
   return sendEmail({
     to,
-    subject: `❌ Payment Failed: Action Required — ${planLabel} | SUOWMRS`,
-    html: baseTemplate({
-      title: 'Payment Processing Failed',
-      subtitle: 'Immediate action required to renew your maintenance coverage',
-      badgeText: 'PAYMENT ALERT',
-      badgeColor: '#EF4444',
-      content,
-    }),
+    subject: `Payment failed — action required — ${planLabel} — SUOWMRS`,
+    html: layout({ title: 'Payment could not be processed', eyebrow: 'Payment alert', accent: COLORS.danger, content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 8. Subscription Activated Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendSubscriptionActivatedEmail = async ({ to, customerName, plan, planLabel, amountPerCycle, billingCycle, periodEnd }) => {
-  const formattedAmount = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amountPerCycle);
-  const renewDate = periodEnd ? new Date(periodEnd).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }) : 'N/A';
+  const rate = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amountPerCycle);
 
   const content = `
-    <div class="greeting">Dear ${customerName},</div>
-    <div class="message">
-      Your SUOWMRS Annual Maintenance Contract (AMC) subscription is officially <strong style="color:#34D399;">ACTIVE</strong>. Your drainage sensors and overflow equipment are covered under priority technical warranty.
-    </div>
-
-    <table class="info-table">
-      <tr><td>Subscription Plan</td><td><strong>${planLabel}</strong></td></tr>
-      <tr><td>Billing Cycle</td><td>${billingCycle.toUpperCase()}</td></tr>
-      <tr><td>Rate per Period</td><td><strong style="color:#38BDF8;">${formattedAmount}</strong></td></tr>
-      <tr><td>Coverage Status</td><td><span class="badge badge-success">ACTIVE & PROTECTED</span></td></tr>
-      <tr><td>Next Renewal Date</td><td>${renewDate}</td></tr>
-    </table>
-
-    <div class="security-note">
-      A certified SUOWMRS field technician will conduct regular bi-monthly sensor diagnostic inspections. You can track all scheduled visits from your dashboard.
-    </div>
+    ${greeting(`Dear ${customerName || 'Customer'}`)}
+    ${paragraph(`Your SUOWMRS Annual Maintenance Contract (AMC) subscription is now ${strong('active', COLORS.success)}. Your drainage sensors and overflow equipment are covered under priority technical support.`)}
+    ${details([
+      ['Plan', strong(planLabel)],
+      ['Billing cycle', esc(String(billingCycle || '').toUpperCase())],
+      ['Rate per period', strong(rate, COLORS.brand)],
+      ['Coverage', badge('Active', COLORS.success)],
+      ['Next renewal', periodEnd ? esc(fmtDate(periodEnd)) : 'N/A'],
+    ])}
+    ${button('View your dashboard', `${CLIENT_URL}/login`, COLORS.success)}
+    ${note('A certified SUOWMRS technician will carry out regular sensor diagnostic inspections. Scheduled visits can be tracked from your dashboard.')}
   `;
 
   return sendEmail({
     to,
-    subject: `🎉 AMC Subscription Active — ${planLabel} | SUOWMRS`,
-    html: baseTemplate({
-      title: 'AMC Subscription Activated',
-      subtitle: 'Comprehensive municipal water system protection is now active',
-      badgeText: 'SERVICE ACTIVATED',
-      badgeColor: '#10B981',
-      content,
-    }),
+    subject: `AMC subscription activated — ${planLabel} — SUOWMRS`,
+    html: layout({ title: 'Your AMC subscription is active', eyebrow: 'Subscription', accent: COLORS.success, content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 9. Invoice Delivery Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendInvoiceEmail = async ({ to, customerName, invoiceNumber, planLabel, amount, invoiceUrl, paidDate }) => {
-  const formattedAmount = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(amount / 100);
-  const date = paidDate ? new Date(paidDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }) : new Date().toLocaleDateString('en-IN');
-
   const content = `
-    <div class="greeting">Dear ${customerName},</div>
-    <div class="message">
-      Please find attached your official GST Tax Invoice from <strong>SUOWMRS</strong> for municipal services and water system maintenance.
-    </div>
-
-    <table class="info-table">
-      <tr><td>Tax Invoice No.</td><td><strong>${invoiceNumber}</strong></td></tr>
-      <tr><td>Service Plan</td><td>${planLabel}</td></tr>
-      <tr><td>Total Paid</td><td><strong style="color:#34D399;">${formattedAmount}</strong></td></tr>
-      <tr><td>Payment Date</td><td>${date}</td></tr>
-      <tr><td>Invoice Status</td><td><span class="badge badge-success">PAID</span></td></tr>
-    </table>
-
-    ${invoiceUrl ? `<div style="text-align:center; margin:22px 0;"><a class="btn" href="${invoiceUrl}" target="_blank">📄 Download Tax Invoice (PDF)</a></div>` : ''}
-
-    <div class="security-note">
-      This document serves as an official proof of payment for tax filing and accounting purposes.
-    </div>
+    ${greeting(`Dear ${customerName || 'Customer'}`)}
+    ${paragraph('Your official GST tax invoice from <strong>SUOWMRS</strong> for municipal services and water-system maintenance is ready.')}
+    ${details([
+      ['Invoice number', strong(invoiceNumber)],
+      ['Service / plan', esc(planLabel)],
+      ['Total paid', strong(fmtINR(amount), COLORS.success)],
+      ['Payment date', esc(fmtDate(paidDate || new Date()))],
+      ['Status', badge('Paid', COLORS.success)],
+    ])}
+    ${invoiceUrl ? button('Download tax invoice (PDF)', invoiceUrl) : ''}
+    ${note('This document serves as official proof of payment for tax filing and accounting purposes.')}
   `;
 
   return sendEmail({
     to,
-    subject: `📄 Tax Invoice: ${invoiceNumber} | SUOWMRS`,
-    html: baseTemplate({
-      title: 'Tax Invoice & Receipt',
-      subtitle: `Invoice #${invoiceNumber} for municipal drainage services`,
-      badgeText: 'TAX INVOICE',
-      badgeColor: '#0EA5E9',
-      content,
-    }),
+    subject: `Tax invoice ${invoiceNumber} — SUOWMRS`,
+    html: layout({ title: `Tax invoice ${invoiceNumber}`, eyebrow: 'Invoice', content }),
   });
 };
 
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 // 10. Service Team Notification Email
-// ─────────────────────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
 export const sendServiceTeamNotification = async ({ customerName, planLabel, address, contactNumber, serviceType }) => {
-  const teamEmail = process.env.SERVICE_TEAM_EMAIL || process.env.SMTP_USER;
+  const teamEmail = process.env.SERVICE_TEAM_EMAIL || SENDER.email;
   if (!teamEmail) return;
 
   const content = `
-    <div class="greeting">Field Service Dispatch Team,</div>
-    <div class="message">
-      A new service work order has been generated following confirmed payment/subscription activation.
-    </div>
-
-    <table class="info-table">
-      <tr><td>Customer Name</td><td><strong>${customerName}</strong></td></tr>
-      <tr><td>Service / Plan</td><td><strong>${serviceType || planLabel}</strong></td></tr>
-      <tr><td>Location / Ward</td><td>${address || 'Address registered on user profile'}</td></tr>
-      <tr><td>Contact Number</td><td><strong style="color:#38BDF8;">${contactNumber || 'N/A'}</strong></td></tr>
-      <tr><td>Dispatch Timestamp</td><td>${new Date().toLocaleString('en-IN')}</td></tr>
-    </table>
-
-    <div class="security-note">
-      Please assign a certified technician within 24 hours via the SUOWMRS Technician Dispatch Console.
-    </div>
+    ${greeting('Field service team')}
+    ${paragraph('A new service work order has been generated following a confirmed payment / subscription activation.')}
+    ${details([
+      ['Customer', strong(customerName)],
+      ['Service / plan', strong(serviceType || planLabel)],
+      ['Location / ward', esc(address || 'Address registered on the user profile')],
+      ['Contact number', strong(contactNumber || 'N/A', COLORS.brand)],
+      ['Generated on', esc(fmtDateTime())],
+    ])}
+    ${button('Open dispatch console', `${CLIENT_URL}/login`, COLORS.warning)}
+    ${note('Please assign a certified technician within 24 hours via the SUOWMRS technician dispatch console.')}
   `;
 
   return sendEmail({
     to: teamEmail,
-    subject: `🛠️ New Service Work Order: ${customerName} (${planLabel})`,
-    html: baseTemplate({
-      title: 'Field Service Dispatch Order',
-      subtitle: 'Automated work order for on-site system inspection',
-      badgeText: 'DISPATCH ALERT',
-      badgeColor: '#F59E0B',
-      content,
-    }),
+    subject: `New service work order: ${customerName} (${planLabel})`,
+    html: layout({ title: 'New field service work order', eyebrow: 'Dispatch', accent: COLORS.warning, content }),
   });
 };
-
