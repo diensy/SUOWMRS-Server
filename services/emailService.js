@@ -11,6 +11,11 @@ const createTransporter = () => {
       pass: process.env.SMTP_PASS || '',
     },
     tls: { rejectUnauthorized: false },
+    // Fail fast if the SMTP host is unreachable so API requests (e.g. /send-otp)
+    // don't hang for minutes waiting on nodemailer's default timeouts.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 15_000,
   });
 };
 
