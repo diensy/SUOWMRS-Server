@@ -117,14 +117,15 @@ router.post('/send-otp', async (req, res) => {
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
     otpStore.set(cleanEmail, { otp, expiresAt, fullName: fullName || 'User' });
 
-    try {
-      await sendOtpEmail({ to: cleanEmail, fullName: fullName || 'User', otp });
-    } catch (mailErr) {
-      console.error('[OTP Email Error]:', mailErr.message);
-      // Still return success — OTP is in store; email failure non-blocking in dev
+    console.log(`[OTP] Generated for ${cleanEmail}: ${otp}`);
+
+    const mail = await sendOtpEmail({ to: cleanEmail, fullName: fullName || 'User', otp });
+    if (!mail.success) {
+      // Keep the OTP in store (it's in the server log for local dev), but tell
+      // the client the email never went out instead of pretending it did.
+      return res.status(502).json({ error: 'Could not send the verification email. Please try again in a moment.' });
     }
 
-    console.log(`[OTP] Sent to ${cleanEmail}: ${otp}`);
     res.json({ success: true, message: `OTP sent to ${cleanEmail}. Valid for 10 minutes.` });
   } catch (err) {
     console.error('[OTP Send Error]:', err);
@@ -179,14 +180,13 @@ router.post('/forgot-password', async (req, res) => {
 
     console.log(`[PASSWORD RESET] Generated OTP for ${cleanEmail}: ${resetOtp}`);
 
-    try {
-      await sendPasswordResetEmail({
-        to: cleanEmail,
-        fullName: user.fullName,
-        resetOtp,
-      });
-    } catch (mailErr) {
-      console.error('[Password Reset Email Error]:', mailErr.message);
+    const mail = await sendPasswordResetEmail({
+      to: cleanEmail,
+      fullName: user.fullName,
+      resetOtp,
+    });
+    if (!mail.success) {
+      return res.status(502).json({ error: 'Could not send the reset code email. Please try again in a moment.' });
     }
 
     res.json({

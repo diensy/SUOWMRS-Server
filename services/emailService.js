@@ -21,6 +21,42 @@ const createTransporter = () => {
 
 const FROM = process.env.EMAIL_FROM || 'SUOWMRS Notification <noreply@suowmrs.in>';
 
+// ── Brevo HTTPS transport (used when BREVO_API_KEY is set) ──
+// Hosts like Render block outbound SMTP ports on free instances, so in
+// production we deliver over HTTPS instead. The sender address must be a
+// verified sender in the Brevo account.
+const BREVO_API_KEY = process.env.BREVO_API_KEY || '';
+
+const parseFrom = (from) => {
+  const match = from.match(/^\s*(?:"?([^"<]*)"?\s*)?<([^>]+)>\s*$/);
+  return match
+    ? { name: (match[1] || 'SUOWMRS').trim(), email: match[2].trim() }
+    : { name: 'SUOWMRS', email: from.trim() };
+};
+
+const sendViaBrevo = async ({ to, subject, html }) => {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': BREVO_API_KEY,
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      sender: parseFrom(FROM),
+      to: [{ email: to }],
+      subject,
+      htmlContent: html,
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(`Brevo ${res.status}: ${data?.message || data?.code || 'request failed'}`);
+  }
+  return { messageId: data?.messageId };
+};
+
 // ── Premium Modern Email Template Wrapper ──
 const baseTemplate = ({ title, subtitle, badgeText = 'OFFICIAL NOTIFICATION', badgeColor = '#0EA5E9', content }) => `
 <!DOCTYPE html>
@@ -279,10 +315,11 @@ const baseTemplate = ({ title, subtitle, badgeText = 'OFFICIAL NOTIFICATION', ba
 
 // ── Generic Send Function ──
 export const sendEmail = async ({ to, subject, html }) => {
-  const transporter = createTransporter();
   try {
-    const info = await transporter.sendMail({ from: FROM, to, subject, html });
-    console.log(`✉️ Email successfully dispatched to ${to}: [${subject}] (ID: ${info?.messageId || 'ok'})`);
+    const info = BREVO_API_KEY
+      ? await sendViaBrevo({ to, subject, html })
+      : await createTransporter().sendMail({ from: FROM, to, subject, html });
+    console.log(`✉️ Email successfully dispatched to ${to} via ${BREVO_API_KEY ? 'Brevo' : 'SMTP'}: [${subject}] (ID: ${info?.messageId || 'ok'})`);
     return { success: true, messageId: info?.messageId };
   } catch (error) {
     console.error(`⚠️ Email dispatch failed to ${to}:`, error.message);
