@@ -62,13 +62,39 @@ const toAsciiDigit = (ch) => { const c = ch.charCodeAt(0); for (const b of DIGIT
 
 const escapeXml = (s) => s.replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
-function normalizeText(text) {
-  return String(text)
+// "&" spoken in the target language. msedge-tts does not escape SSML, so a raw "&" also kills the stream.
+const AND_WORD = { en: 'and', hi: 'और', or: 'ଓ', te: 'మరియు', ta: 'மற்றும்', bn: 'এবং' };
+const PERCENT_WORD = { en: 'percent', hi: 'प्रतिशत', or: 'ପ୍ରତିଶତ', te: 'శాతం', ta: 'சதவீதம்', bn: 'শতাংশ' };
+
+// Acronyms every voice otherwise tries to read as a word ("suomers", "yot") → spelled letter by letter
+const ACRONYMS = [
+  ['SUOWMRS', 'S U O W M R S'],
+  ['IoT', 'I o T'],
+  ['AI', 'A I'],
+  ['ESP32', 'E S P 32'],
+  ['SOS', 'S O S'],
+  ['GIS', 'G I S'],
+  ['TDS', 'T D S'],
+  ['PWA', 'P W A'],
+  ['LED', 'L E D'],
+  ['UPI', 'U P I'],
+];
+
+export function normalizeText(text, lang = 'en') {
+  let out = String(text)
     .replace(/<[^>]*>/g, ' ')
-    .replace(/[•●▪■◆|—–_*#`]/g, ' ')
-    .replace(NATIVE_DIGITS, toAsciiDigit)
-    .replace(/(\d)\s*%/g, '$1 percent')
+    .replace(NATIVE_DIGITS, toAsciiDigit);
+  for (const [abbr, spoken] of ACRONYMS) {
+    out = out.replace(new RegExp(`(?<![A-Za-z])${abbr}(?![A-Za-z])`, 'g'), spoken);
+  }
+  return out
+    .replace(/\s*&\s*/g, ` ${AND_WORD[lang] || AND_WORD.en} `)
+    .replace(/(\d)\s*%/g, `$1 ${PERCENT_WORD[lang] || PERCENT_WORD.en}`)
+    .replace(/\s*[—–/]\s*/g, ', ') // dashes and slashes → short pause instead of a run-on
+    .replace(/[•●▪■◆|_*#`<>"]/g, ' ')
+    .replace(/\s*,(\s*,)+/g, ',')
     .replace(/\s+/g, ' ')
+    .replace(/\s+([,.।॥!?])/g, '$1')
     .trim()
     .slice(0, MAX_TEXT_LENGTH);
 }
@@ -90,7 +116,8 @@ async function synthesizeEdge(text, voice, rate) {
   const tts = new MsEdgeTTS();
   try {
     await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-    const { audioStream } = tts.toStream(text, { rate });
+    // msedge-tts injects the text into SSML verbatim → escape it ourselves
+    const { audioStream } = tts.toStream(escapeXml(text), { rate });
     const buf = await streamToBuffer(audioStream);
     if (!buf.length) throw new Error('Edge TTS returned empty audio');
     return buf;
@@ -125,7 +152,7 @@ const inflight = new Map();
  * is not supported by any configured provider.
  */
 export async function synthesize(rawText, lang = 'en', { rate = 1 } = {}) {
-  const text = normalizeText(rawText);
+  const text = normalizeText(rawText, lang);
   if (!text) throw Object.assign(new Error('Empty text'), { status: 400 });
   const provider = providerFor(lang);
   if (!provider) throw Object.assign(new Error(`No server voice available for language "${lang}"`), { status: 422, code: 'LANG_UNSUPPORTED' });
