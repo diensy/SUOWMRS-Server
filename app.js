@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -12,6 +13,9 @@ import workOrdersRoutes from './routes/workOrders.js';
 import municipalityRoutes from './routes/municipality.js';
 import complaintRoutes from './routes/complaints.js';
 import predictionRoutes from './routes/prediction.js';
+import paymentRoutes from './routes/payments.js';
+import adminPlansRoutes from './routes/adminPlans.js';
+import ttsRoutes from './routes/tts.js';
 
 const app = express();
 
@@ -33,7 +37,11 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json());
+// Stripe webhooks must receive the raw body for signature verification — skip JSON parsing for that path
+app.use((req, res, next) => {
+  if (req.originalUrl === '/api/payments/webhook') return next();
+  return express.json()(req, res, next);
+});
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan('dev'));
 
@@ -49,6 +57,9 @@ app.use('/api/work-orders', workOrdersRoutes);
 app.use('/api/municipality', municipalityRoutes);
 app.use('/api/complaints', complaintRoutes);
 app.use('/api/prediction', predictionRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/admin', adminPlansRoutes);
+app.use('/api/tts', ttsRoutes);
 
 // Root fallback
 app.get('/', (req, res) => {

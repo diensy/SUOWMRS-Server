@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import './config/dns.js';
 import http from 'http';
-import dotenv from 'dotenv';
 import { Server as SocketIOServer } from 'socket.io';
 import app from './app.js';
 import { connectDB } from './config/db.js';
@@ -12,9 +12,6 @@ import { initHistoricalDataset } from './services/datasetService.js';
 import { initWeatherService } from './services/weatherService.js';
 import { initPredictionAuditDataset } from './services/predictionEngine.js';
 import { seedInitialComplaints } from './routes/complaints.js';
-
-// Load environment configuration
-dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 
